@@ -1,0 +1,5 @@
+product_line,product_name,line_of_business,term_months
+AUTO,Personal Auto,Personal Auto,6
+HOME,Homeowners (HO-3),Personal Property,12
+RENTERS,Renters (HO-4),Personal Property,12
+UMBRELLA,Personal Umbrella,Personal Liability,12

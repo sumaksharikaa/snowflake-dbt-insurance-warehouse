@@ -1,0 +1,10 @@
+cause_of_loss,peril_group,is_weather_related
+COLLISION,Auto Physical Damage,false
+COMPREHENSIVE,Auto Physical Damage,true
+GLASS,Auto Physical Damage,false
+BODILY_INJURY,Liability,false
+WIND_HAIL,Property,true
+WATER,Property,false
+FIRE,Property,false
+THEFT,Property,false
+LIABILITY,Liability,false

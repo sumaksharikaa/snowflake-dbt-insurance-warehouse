@@ -1,0 +1,24 @@
+# Two targets, same models:
+#   dev        local DuckDB file (used by `make build` and CI); no account needed
+#   snowflake  Snowflake with key-pair auth; credentials come from environment variables only
+insurance_warehouse:
+  target: "{{ env_var('DBT_TARGET', 'dev') }}"
+  outputs:
+    dev:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', '../data/warehouse.duckdb') }}"
+      schema: analytics
+      threads: 4
+
+    snowflake:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT', '') }}"
+      user: "{{ env_var('SNOWFLAKE_USER', '') }}"
+      private_key_path: "{{ env_var('SNOWFLAKE_PRIVATE_KEY_PATH', '') }}"
+      role: TRANSFORMER
+      warehouse: TRANSFORM_WH
+      database: INSURANCE
+      schema: ANALYTICS
+      threads: 8
+      client_session_keep_alive: false
+      query_tag: dbt_insurance_warehouse

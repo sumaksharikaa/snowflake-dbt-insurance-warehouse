@@ -1,0 +1,146 @@
+version: 2
+
+models:
+  # ------------------------------------------------------------------ core
+  - name: dim_customer
+    description: SCD Type 2 customer dimension (one row per customer version) built from the customers snapshot.
+    columns:
+      - name: customer_sk
+        description: Surrogate key of one customer version.
+        data_tests: [unique, not_null]
+      - name: customer_id
+        data_tests: [not_null]
+      - name: email
+        description: PII. Masked in Snowflake for roles without PII access.
+    data_tests:
+      - expression_is_true:
+          arguments:
+            expression: "valid_to > valid_from"
+
+  - name: dim_agent
+    columns:
+      - name: agent_id
+        data_tests: [unique, not_null]
+
+  - name: dim_policy
+    description: One row per policy, described by its most recent term.
+    columns:
+      - name: policy_id
+        data_tests: [unique, not_null]
+      - name: customer_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: policy_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["IN_FORCE", "EXPIRED", "CANCELLED", "FUTURE"]
+
+  - name: dim_date
+    columns:
+      - name: date_day
+        data_tests: [unique, not_null]
+
+  # --------------------------------------------------------------- finance
+  - name: fct_policy_transactions
+    description: Written premium and agent commission at policy-transaction grain.
+    columns:
+      - name: policy_txn_id
+        data_tests: [unique, not_null]
+      - name: policy_term_id
+        data_tests: [not_null]
+
+  - name: fct_premium_monthly
+    description: Policy x month written and earned premium (pro-rata daily earning).
+    columns:
+      - name: policy_month_id
+        data_tests: [unique, not_null]
+
+  - name: mart_premium_summary
+    description: Product x month written, earned, unearned premium reserve and policies in force.
+    data_tests:
+      - unique_combination:
+          arguments:
+            combination_of_columns: ["product_line", "month_start"]
+    columns:
+      - name: unearned_premium_reserve
+        data_tests: [not_negative]
+
+  # ---------------------------------------------------------------- claims
+  - name: fct_claim_transactions
+    description: Incremental claim financial transactions with paid and incurred change.
+    columns:
+      - name: claim_txn_id
+        data_tests: [unique, not_null]
+      - name: product_line
+        data_tests: [not_null]
+
+  - name: fct_claims
+    description: >
+      Claim grain with financials as of the valuation date, the covering policy term and the
+      customer version valid on the loss date.
+    columns:
+      - name: claim_id
+        data_tests: [unique, not_null]
+      - name: policy_term_id
+        description: Every claim must fall inside a policy term.
+        data_tests: [not_null]
+      - name: customer_sk
+        description: Point-in-time customer version.
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_customer')
+                field: customer_sk
+      - name: case_reserve
+        data_tests: [not_negative]
+      - name: is_loss_in_coverage_period
+        description: Losses after a cancellation date are flagged for review (coverage investigation).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [true]
+              config:
+                severity: warn
+
+  - name: mart_loss_ratio_monthly
+    description: Calendar-period earned premium, paid and incurred losses and loss ratios by product and month.
+    data_tests:
+      - unique_combination:
+          arguments:
+            combination_of_columns: ["product_line", "month_start"]
+
+  - name: mart_loss_triangle
+    description: Cumulative paid and incurred loss development by accident quarter and development quarter.
+    data_tests:
+      - unique_combination:
+          arguments:
+            combination_of_columns: ["product_line", "accident_quarter", "development_quarter"]
+
+exposures:
+  - name: loss_ratio_dashboard
+    label: Personal Lines Loss Ratio Dashboard
+    type: dashboard
+    maturity: high
+    description: Monthly earned premium, losses and loss ratio (incl. ex-CAT) by product, used in the monthly underwriting review.
+    owner:
+      name: Actuarial & Underwriting Analytics
+      email: analytics@example.com
+    depends_on:
+      - ref('mart_loss_ratio_monthly')
+      - ref('mart_premium_summary')
+
+  - name: reserving_triangles
+    label: Quarterly Reserving Triangles
+    type: analysis
+    maturity: medium
+    description: Paid and incurred development triangles that feed the chain-ladder reserve review.
+    owner:
+      name: Reserving Actuaries
+      email: reserving@example.com
+    depends_on:
+      - ref('mart_loss_triangle')

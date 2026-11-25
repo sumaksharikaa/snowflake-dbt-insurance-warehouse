@@ -1,0 +1,28 @@
+version: 2
+
+sources:
+  - name: raw
+    description: >
+      Landing tables loaded by Snowpipe (Snowflake) or scripts/load_raw.py (local).
+      Append-only, every column as text, stamped with _loaded_at and _source_file.
+    schema: raw
+    config:
+      loaded_at_field: _loaded_at
+      freshness:
+        warn_after: { count: 26, period: hour }
+        error_after: { count: 50, period: hour }
+    tables:
+      - name: customers
+        description: Customer master extracts (current state at extract time).
+      - name: agents
+        description: Independent agents and agencies.
+        config:
+          freshness: null
+      - name: policy_transactions
+        description: Policy lifecycle transactions (NEW, ENDORSEMENT, RENEWAL, CANCELLATION) with written premium.
+      - name: policy_coverages
+        description: Coverages, limits and deductibles per policy term.
+      - name: claims
+        description: Claim header versions; a new row each time status changes.
+      - name: claim_transactions
+        description: Claim financial transactions (RESERVE changes, PAYMENTs, RECOVERYs). May contain re-delivered rows.

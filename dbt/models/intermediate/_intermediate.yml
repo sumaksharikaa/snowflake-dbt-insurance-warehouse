@@ -1,0 +1,107 @@
+version: 2
+
+models:
+  - name: int_calendar_months
+    description: First day of every calendar month in the modelled range, with the next month's first day.
+    columns:
+      - name: month_start
+        data_tests: [unique, not_null]
+
+  - name: int_policy_terms
+    description: One row per policy term with full-term premium after endorsements and cancellations.
+    columns:
+      - name: policy_term_id
+        data_tests: [unique, not_null]
+      - name: term_type
+        description: NEW or RENEWAL. Every term must start with one of them.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["NEW", "RENEWAL"]
+      - name: term_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["IN_FORCE", "EXPIRED", "CANCELLED", "FUTURE"]
+
+  - name: int_premium_earned_monthly
+    description: Written premium of each policy transaction, earned pro-rata by day into calendar months.
+    data_tests:
+      - unique_combination:
+          arguments:
+            combination_of_columns: ["policy_txn_id", "month_start"]
+    columns:
+      - name: overlap_days
+        data_tests:
+          - expression_is_true:
+              arguments:
+                expression: "overlap_days <= exposure_days"
+
+  - name: int_claim_financials
+    description: Paid, recovered, case reserve and incurred loss per claim as of the valuation date.
+    columns:
+      - name: claim_id
+        data_tests: [unique, not_null]
+      - name: case_reserve
+        description: Outstanding case reserve; can never be negative.
+        data_tests: [not_negative]
+
+unit_tests:
+  - name: earns_pro_rata_by_day_with_rounding_plug
+    description: >
+      100.00 over a 91-day term (Jan 1 - Apr 1, 2024 is a leap year) earns 31/91, 29/91 and 31/91.
+      Each month rounds to cents and the last month absorbs the remainder, so the total is exactly 100.00.
+    model: int_premium_earned_monthly
+    given:
+      - input: ref('stg_policy_transactions')
+        rows:
+          - { policy_txn_id: "T1", policy_id: "P1", product_line: "AUTO", txn_type: "NEW",
+              txn_effective_date: "2024-01-01", term_effective_date: "2024-01-01",
+              term_expiration_date: "2024-04-01", written_premium: 100.00 }
+      - input: ref('int_calendar_months')
+        rows:
+          - { month_start: "2024-01-01", next_month_start: "2024-02-01" }
+          - { month_start: "2024-02-01", next_month_start: "2024-03-01" }
+          - { month_start: "2024-03-01", next_month_start: "2024-04-01" }
+          - { month_start: "2024-04-01", next_month_start: "2024-05-01" }
+    expect:
+      rows:
+        - { month_start: "2024-01-01", overlap_days: 31, earned_premium: 34.07 }
+        - { month_start: "2024-02-01", overlap_days: 29, earned_premium: 31.87 }
+        - { month_start: "2024-03-01", overlap_days: 31, earned_premium: 34.06 }
+
+  - name: cancellation_offsets_remaining_earnings
+    description: A mid-term cancellation's negative premium exactly cancels earnings after the cancel date.
+    model: int_premium_earned_monthly
+    given:
+      - input: ref('stg_policy_transactions')
+        rows:
+          - { policy_txn_id: "T1", policy_id: "P1", product_line: "AUTO", txn_type: "NEW",
+              txn_effective_date: "2025-01-01", term_effective_date: "2025-01-01",
+              term_expiration_date: "2025-03-01", written_premium: 590.00 }
+          - { policy_txn_id: "T2", policy_id: "P1", product_line: "AUTO", txn_type: "CANCELLATION",
+              txn_effective_date: "2025-02-01", term_effective_date: "2025-01-01",
+              term_expiration_date: "2025-03-01", written_premium: -280.00 }
+      - input: ref('int_calendar_months')
+        rows:
+          - { month_start: "2025-01-01", next_month_start: "2025-02-01" }
+          - { month_start: "2025-02-01", next_month_start: "2025-03-01" }
+    expect:
+      rows:
+        - { policy_txn_id: "T1", month_start: "2025-01-01", earned_premium: 310.00 }
+        - { policy_txn_id: "T1", month_start: "2025-02-01", earned_premium: 280.00 }
+        - { policy_txn_id: "T2", month_start: "2025-02-01", earned_premium: -280.00 }
+
+  - name: incurred_equals_paid_plus_reserve_less_recovery
+    model: int_claim_financials
+    given:
+      - input: ref('stg_claim_transactions')
+        rows:
+          - { claim_txn_id: "1", claim_id: "C1", txn_date: "2025-01-10", txn_type: "RESERVE", amount: 5000 }
+          - { claim_txn_id: "2", claim_id: "C1", txn_date: "2025-02-10", txn_type: "PAYMENT", amount: 3000 }
+          - { claim_txn_id: "3", claim_id: "C1", txn_date: "2025-02-10", txn_type: "RESERVE", amount: -3000 }
+          - { claim_txn_id: "4", claim_id: "C1", txn_date: "2025-04-01", txn_type: "RECOVERY", amount: 500 }
+    expect:
+      rows:
+        - { claim_id: "C1", paid_loss: 3000, recovered: 500, case_reserve: 2000, incurred_loss: 4500, payment_count: 1 }

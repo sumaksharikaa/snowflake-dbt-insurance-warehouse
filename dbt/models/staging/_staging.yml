@@ -1,0 +1,106 @@
+version: 2
+
+models:
+  - name: stg_customers
+    description: Latest version of each customer. PII columns are masked in Snowflake by policy (see snowflake/04_governance.sql).
+    columns:
+      - name: customer_id
+        data_tests: [unique, not_null]
+      - name: email
+        description: PII. Masked for roles other than PII_READER.
+      - name: state
+        data_tests:
+          - not_null
+      - name: credit_tier
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["A", "B", "C"]
+
+  - name: stg_agents
+    columns:
+      - name: agent_id
+        data_tests: [unique, not_null]
+      - name: commission_rate
+        data_tests:
+          - value_between:
+              arguments:
+                min_value: 0
+                max_value: 0.25
+
+  - name: stg_policy_transactions
+    description: One row per policy transaction (re-deliveries collapsed).
+    columns:
+      - name: policy_txn_id
+        data_tests: [unique, not_null]
+      - name: policy_id
+        data_tests: [not_null]
+      - name: customer_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_customers')
+                field: customer_id
+      - name: agent_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_agents')
+                field: agent_id
+      - name: product_line
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["AUTO", "HOME", "RENTERS", "UMBRELLA"]
+      - name: txn_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["NEW", "ENDORSEMENT", "RENEWAL", "CANCELLATION"]
+      - name: term_expiration_date
+        data_tests:
+          - expression_is_true:
+              arguments:
+                expression: "term_expiration_date > term_effective_date"
+
+  - name: stg_policy_coverages
+    columns:
+      - name: coverage_premium
+        data_tests: [not_negative]
+
+  - name: stg_claims
+    columns:
+      - name: claim_id
+        data_tests: [unique, not_null]
+      - name: policy_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_policy_transactions')
+                field: policy_id
+      - name: claim_status
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["OPEN", "CLOSED"]
+      - name: reported_date
+        data_tests:
+          - expression_is_true:
+              arguments:
+                expression: "reported_date >= loss_date"
+
+  - name: stg_claim_transactions
+    columns:
+      - name: claim_txn_id
+        data_tests: [unique, not_null]
+      - name: claim_id
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_claims')
+                field: claim_id
+      - name: txn_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["RESERVE", "PAYMENT", "RECOVERY"]
