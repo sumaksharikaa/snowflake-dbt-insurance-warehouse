@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  dbt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DBT_PROFILES_DIR: .
+      DUCKDB_PATH: ../data/warehouse.duckdb
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install
+        run: pip install -r requirements.txt
+
+      - name: Lint Python
+        run: ruff check . && ruff format --check .
+
+      - name: Generate synthetic data
+        run: python data_generator/generate_insurance_data.py --out data/raw
+
+      - name: Load extract 1 and build (seeds, snapshot, models, unit + data tests)
+        run: |
+          python scripts/load_raw.py data/raw/load_1
+          cd dbt && dbt build
+
+      - name: Load extract 2 and build again (incremental merge + SCD2 snapshot)
+        run: |
+          python scripts/load_raw.py data/raw/load_2
+          cd dbt && dbt build
+
+      - name: Source freshness
+        run: cd dbt && dbt source freshness
+
+      - name: Parse for the Snowflake target
+        env:
+          DBT_TARGET: snowflake
+          SNOWFLAKE_ACCOUNT: ci-placeholder
+          SNOWFLAKE_USER: ci-placeholder
+        run: cd dbt && dbt parse --no-partial-parse
+
+      - name: Generate docs
+        run: cd dbt && dbt docs generate
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dbt-docs
+          path: |
+            dbt/target/index.html
+            dbt/target/catalog.json
+            dbt/target/manifest.json
